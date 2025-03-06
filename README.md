@@ -4,7 +4,8 @@
 </div>
 
 Propaganda Bot is a [Mumble](https://www.mumble.info/) music bot, forked from Botamusique.
-Predicted functionalities will be those people would expect from any classic music player.
+
+Use basic commands such as !play https://youtube.com/songurl.
 
 I plan on removing some functionalities to keep this as streamlined as possible: a simple YouTube/Media player bot with volume control that is easy to maintain.
 
