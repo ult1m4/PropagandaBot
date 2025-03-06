@@ -1,5 +1,5 @@
 flask
-yt-dlp
+yt-dlp #Changed from youtube-dl
 python-magic
 Pillow
 mutagen

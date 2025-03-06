@@ -9,13 +9,12 @@ import glob
 from io import BytesIO
 import base64
 
-import util
-from constants import tr_cli as tr
+import constants
 import media
 import variables as var
 from media.item import BaseItem, item_builders, item_loaders, item_id_generators, ValidationFailedError, \
     PreparationFailedError
-from util import format_time
+import media.system
 
 log = logging.getLogger("bot")
 
@@ -46,7 +45,7 @@ class URLItem(BaseItem):
             self.title = ""
             self.duration = 0
             self.id = hashlib.md5(url.encode()).hexdigest()
-            self.path = var.tmp_folder + self.id
+            self.path = var.tmp_folder + self.id + ".mp3"
             self.thumbnail = ""
             self.keywords = ""
         else:
@@ -75,45 +74,36 @@ class URLItem(BaseItem):
         return True
 
     def validate(self):
-        try:
-            self.validating_lock.acquire()
-            if self.ready in ['yes', 'validated']:
-                return True
-
-            # if self.ready == 'failed':
-            #     self.validating_lock.release()
-            #     return False
-            #
-            if os.path.exists(self.path):
-                self.ready = "yes"
-                return True
-
-            # Check if this url is banned
-            if var.db.has_option('url_ban', self.url):
-                raise ValidationFailedError(tr('url_ban', url=self.url))
-
-            # avoid multiple process validating in the meantime
-            info = self._get_info_from_url()
-
-            if not info:
-                return False
-
-            # Check if the song is too long and is not whitelisted
-            max_duration = var.config.getint('bot', 'max_track_duration') * 60
-            if max_duration and \
-                    not var.db.has_option('url_whitelist', self.url) and \
-                    self.duration > max_duration:
-                log.info(
-                    "url: " + self.url + " has a duration of " + str(self.duration / 60) + " min -- too long")
-                raise ValidationFailedError(tr('too_long', song=self.format_title(),
-                                               duration=format_time(self.duration),
-                                               max_duration=format_time(max_duration)))
-            else:
-                self.ready = "validated"
-                self.version += 1  # notify wrapper to save me
-                return True
-        finally:
+        self.validating_lock.acquire()
+        if self.ready in ['yes', 'validated']:
             self.validating_lock.release()
+            return True
+
+        # if self.ready == 'failed':
+        #     self.validating_lock.release()
+        #     return False
+        #
+        if os.path.exists(self.path):
+            self.validating_lock.release()
+            self.ready = "yes"
+            return True
+
+        # avoid multiple process validating in the meantime
+        info = self._get_info_from_url()
+        self.validating_lock.release()
+
+        if not info:
+            return False
+
+        if self.duration > var.config.getint('bot', 'max_track_duration') * 60 != 0:
+            # Check the length, useful in case of playlist, it wasn't checked before)
+            log.info(
+                "url: " + self.url + " has a duration of " + str(self.duration / 60) + " min -- too long")
+            raise ValidationFailedError(constants.strings('too_long', song=self.title))
+        else:
+            self.ready = "validated"
+            self.version += 1  # notify wrapper to save me
+            return True
 
     # Run in a other thread
     def prepare(self):
@@ -129,24 +119,15 @@ class URLItem(BaseItem):
         ydl_opts = {
             'noplaylist': True
         }
-
-        cookie = var.config.get('youtube_dl', 'cookie_file')
-        if cookie:
-            ydl_opts['cookiefile'] = var.config.get('youtube_dl', 'cookie_file')
-
-        user_agent = var.config.get('youtube_dl', 'user_agent')
-        if user_agent:
-            youtube_dl.utils.std_headers['User-Agent'] = var.config.get('youtube_dl', 'user_agent')\
-
         succeed = False
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            attempts = var.config.getint('bot', 'download_attempts')
+            attempts = var.config.getint('bot', 'download_attempts', fallback=2)
             for i in range(attempts):
                 try:
                     info = ydl.extract_info(self.url, download=False)
                     self.duration = info['duration']
-                    self.title = info['title'].strip()
-                    self.keywords = self.title
+                    self.title = info['title']
+                    self.keywords = info['title']
                     succeed = True
                     return True
                 except youtube_dl.utils.DownloadError:
@@ -157,14 +138,15 @@ class URLItem(BaseItem):
         if not succeed:
             self.ready = 'failed'
             self.log.error("url: error while fetching info from the URL")
-            raise ValidationFailedError(tr('unable_download', item=self.format_title()))
+            raise ValidationFailedError(constants.strings('unable_download', item=self.format_title()))
 
     def _download(self):
-        util.clear_tmp_folder(var.tmp_folder, var.config.getint('bot', 'tmp_folder_max_size'))
+        media.system.clear_tmp_folder(var.tmp_folder, var.config.getint('bot', 'tmp_folder_max_size'))
 
         self.downloading = True
         base_path = var.tmp_folder + self.id
-        save_path = base_path
+        save_path = base_path + ".%(ext)s"
+        mp3_path = base_path + ".mp3"
 
         # Download only if music is not existed
         self.ready = "preparing"
@@ -172,31 +154,24 @@ class URLItem(BaseItem):
         self.log.info("bot: downloading url (%s) %s " % (self.title, self.url))
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': base_path,
+            'outtmpl': save_path,
             'noplaylist': True,
             'writethumbnail': True,
             'updatetime': False,
-            'verbose': var.config.getboolean('debug', 'youtube_dl'),
             'postprocessors': [{
-                'key': 'FFmpegThumbnailsConvertor',
-                'format': 'jpg',
-                'when': 'before_dl'
-            }]
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192'},
+                {'key': 'FFmpegMetadata'}],
+            'extractaudio': True,
+            'audioformat': 'mp3',
         }
 
-        cookie = var.config.get('youtube_dl', 'cookie_file')
-        if cookie:
-            ydl_opts['cookiefile'] = var.config.get('youtube_dl', 'cookie_file')
-
-        user_agent = var.config.get('youtube_dl', 'user_agent')
-        if user_agent:
-            youtube_dl.utils.std_headers['User-Agent'] = var.config.get('youtube_dl', 'user_agent')
-
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            attempts = var.config.getint('bot', 'download_attempts')
+            attempts = var.config.getint('bot', 'download_attempts', fallback=2)
             download_succeed = False
             for i in range(attempts):
-                self.log.info("bot: download attempts %d / %d" % (i + 1, attempts))
+                self.log.info("bot: download attempts %d / %d" % (i+1, attempts))
                 try:
                     ydl.extract_info(self.url)
                     download_succeed = True
@@ -207,7 +182,7 @@ class URLItem(BaseItem):
                     self.log.error("bot: download failed with error:\n %s" % error)
 
             if download_succeed:
-                self.path = save_path
+                self.path = mp3_path
                 self.ready = "yes"
                 self.log.info(
                     "bot: finished downloading url (%s) %s, saved to %s." % (self.title, self.url, self.path))
@@ -220,7 +195,7 @@ class URLItem(BaseItem):
                     os.remove(f)
                 self.ready = "failed"
                 self.downloading = False
-                raise PreparationFailedError(tr('unable_download', item=self.format_title()))
+                raise PreparationFailedError(constants.strings('unable_download', item=self.format_title()))
 
     def _read_thumbnail_from_file(self, path_thumbnail):
         if os.path.isfile(path_thumbnail):
@@ -228,7 +203,7 @@ class URLItem(BaseItem):
             self.thumbnail = self._prepare_thumbnail(im)
 
     def _prepare_thumbnail(self, im):
-        im.thumbnail((100, 100), Image.LANCZOS)
+        im.thumbnail((100, 100), Image.ANTIALIAS)
         buffer = BytesIO()
         im = im.convert('RGB')
         im.save(buffer, format="JPEG")
@@ -253,14 +228,14 @@ class URLItem(BaseItem):
 
     def format_song_string(self, user):
         if self.ready in ['validated', 'yes']:
-            return tr("url_item",
-                      title=self.title if self.title else "??",
-                      url=self.url,
-                      user=user)
+            return constants.strings("url_item",
+                                     title=self.title if self.title else "??",
+                                     url=self.url,
+                                     user=user)
         return self.url
 
     def format_current_playing(self, user):
-        display = tr("now_playing", item=self.format_song_string(user))
+        display = constants.strings("now_playing", item=self.format_song_string(user))
 
         if self.thumbnail:
             thumbnail_html = '<img width="80" src="data:image/jpge;base64,' + \
@@ -270,7 +245,7 @@ class URLItem(BaseItem):
         return display
 
     def format_title(self):
-        return self.title if self.title else self.url
+        return self.title if self.title.strip() else self.url
 
     def display_type(self):
-        return tr("url")
+        return constants.strings("url")

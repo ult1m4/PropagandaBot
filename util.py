@@ -2,24 +2,22 @@
 # coding=utf-8
 
 import hashlib
-import html
 import magic
 import os
 import io
 import sys
 import variables as var
 import zipfile
+import requests
 import re
 import subprocess as sp
 import logging
+import yt_dlp as youtube_dl
 from importlib import reload
 from sys import platform
 import traceback
 import requests
 from packaging import version
-
-import yt_dlp as youtube_dl
-YT_PKG_NAME = 'yt-dlp'
 
 log = logging.getLogger("bot")
 
@@ -29,8 +27,6 @@ def solve_filepath(path):
         return ''
 
     if path[0] == '/':
-        return path
-    elif os.path.exists(path):
         return path
     else:
         mydir = os.path.dirname(os.path.realpath(__file__))
@@ -43,6 +39,8 @@ def get_recursive_file_list_sorted(path):
         relroot = root.replace(path, '', 1)
         if relroot != '' and relroot in var.config.get('bot', 'ignored_folders'):
             continue
+        if len(relroot):
+            relroot += '/'
         for file in files:
             if file in var.config.get('bot', 'ignored_files'):
                 continue
@@ -54,7 +52,7 @@ def get_recursive_file_list_sorted(path):
             try:
                 mime = magic.from_file(fullpath, mime=True)
                 if 'audio' in mime or 'audio' in magic.from_file(fullpath).lower() or 'video' in mime:
-                    filelist.append(os.path.join(relroot, file))
+                    filelist.append(relroot + file)
             except:
                 pass
 
@@ -102,11 +100,8 @@ def get_user_ban():
     return res
 
 
-def new_release_version(target):
-    if target == "testing":
-        r = requests.get("https://packages.azlux.fr/botamusique/testing-version")
-    else:
-        r = requests.get("https://packages.azlux.fr/botamusique/version")
+def new_release_version():
+    r = requests.get("https://packages.azlux.fr/botamusique/version")
     v = r.text
     return v.rstrip()
 
@@ -117,56 +112,48 @@ def fetch_changelog():
     return c
 
 
-def check_update(current_version):
-    global log
-    log.debug("update: checking for updates...")
-    new_version = new_release_version(var.config.get('bot', 'target_version'))
-    if version.parse(new_version) > version.parse(current_version):
-        changelog = fetch_changelog()
-        log.info(f"update: new version {new_version} found, current installed version {current_version}.")
-        log.info(f"update: changelog: {changelog}")
-        changelog = changelog.replace("\n", "<br>")
-        return new_version, changelog
-    else:
-        log.debug("update: no new version found.")
-        return None, None
-
-
 def update(current_version):
     global log
+    log.info("update: automatic updates have been disabled.")
+    return "Automatic updates have been disabled. Please update yt-dlp manually with pip."
 
-    target = var.config.get('bot', 'target_version')
-    new_version = new_release_version(target)
-    msg = ""
-    if target == "git":
-        msg = "git install, I do nothing<br/>"
 
-    elif (target == "stable" and version.parse(new_version) > version.parse(current_version)) or \
-            (target == "testing" and version.parse(new_version) != version.parse(current_version)):
-        log.info('update: new version, start updating...')
-        tp = sp.check_output(['/usr/bin/env', 'bash', 'update.sh', target]).decode()
-        log.debug(tp)
-        log.info('update: update pip libraries dependencies')
-        sp.check_output([var.config.get('bot', 'pip3_path'), 'install', '--upgrade', '-r', 'requirements.txt']).decode()
-        msg = "New version installed, please restart the bot.<br/>"
+def user_ban(user):
+    var.db.set("user_ban", user, None)
+    res = "User " + user + " banned"
+    return res
 
-    log.info(f'update: starting update {YT_PKG_NAME} via pip3')
-    tp = sp.check_output([var.config.get('bot', 'pip3_path'), 'install', '--upgrade', YT_PKG_NAME]).decode()
-    if f"Collecting {YT_PKG_NAME}" in tp.splitlines():
-        msg += "Update done: " + tp.split('Successfully installed')[1]
-    else:
-        msg += YT_PKG_NAME.capitalize() + " is up-to-date"
 
-    reload(youtube_dl)
-    msg += "<br/>" + YT_PKG_NAME.capitalize() + " reloaded"
-    return msg
+def user_unban(user):
+    var.db.remove_option("user_ban", user)
+    res = "Done"
+    return res
+
+
+def get_url_ban():
+    res = "List of ban:"
+    for i in var.db.items("url_ban"):
+        res += "<br/>" + i[0]
+    return res
+
+
+def url_ban(url):
+    var.db.set("url_ban", url, None)
+    res = "url " + url + " banned"
+    return res
+
+
+def url_unban(url):
+    var.db.remove_option("url_ban", url)
+    res = "Done"
+    return res
 
 
 def pipe_no_wait():
     """ Generate a non-block pipe used to fetch the STDERR of ffmpeg.
     """
 
-    if platform == "linux" or platform == "linux2" or platform == "darwin" or platform.startswith("openbsd") or platform.startswith("freebsd"):
+    if platform == "linux" or platform == "linux2" or platform == "darwin" or platform.startswith("openbsd"):
         import fcntl
         import os
 
@@ -309,50 +296,26 @@ def get_url_from_input(string):
         if res:
             string = res.group(1)
         else:
-            return ""
+            return False
 
     match = re.search("(http|https)://(\S*)?/(\S*)", string, flags=re.IGNORECASE)
     if match:
         url = match[1].lower() + "://" + match[2].lower() + "/" + match[3]
-        # https://github.com/mumble-voip/mumble/issues/4999
-        return html.unescape(url)
+        return url
     else:
-        return ""
+        return False
 
 
 def youtube_search(query):
     global log
-    import json
 
     try:
-        cookie_file =  var.config.get('youtube_dl', 'cookie_file')
-        cookie = parse_cookie_file(cookie_file) if cookie_file else {}
-        r = requests.get("https://www.youtube.com/results", cookies=cookie,
-                         params={'search_query': query}, timeout=5)
-        result_json_match = re.findall(r">var ytInitialData = (.*?);</script>", r.text)
+        r = requests.get("https://www.youtube.com/results", params={'search_query': query}, timeout=5)
+        results = re.findall(r"watch\?v=(.*?)\".*?title=\"(.*?)\".*?"
+                             "(?:user|channel).*?>(.*?)<", r.text)  # (id, title, uploader)
 
-        if not len(result_json_match):
-            log.error("util: can not interpret youtube search web page")
-            return False
-
-        result_big_json = json.loads(result_json_match[0])
-        results = []
-        try:
-            for item in result_big_json['contents']['twoColumnSearchResultsRenderer']\
-                    ['primaryContents']['sectionListRenderer']['contents'][0]\
-                    ['itemSectionRenderer']['contents']:
-                if 'videoRenderer' not in item:
-                    continue
-                video_info = item['videoRenderer']
-                title = video_info['title']['runs'][0]['text']
-                video_id = video_info['videoId']
-                uploader = video_info['ownerText']['runs'][0]['text']
-                results.append([video_id, title, uploader])
-        except (json.JSONDecodeError, KeyError):
-            log.error("util: can not interpret youtube search web page")
-            return False
-
-        return results
+        if len(results) > 0:
+            return results
 
     except (requests.exceptions.ConnectionError, requests.exceptions.HTTPError, requests.exceptions.Timeout):
         error_traceback = traceback.format_exc().split("During")[0]
@@ -376,29 +339,21 @@ def get_media_duration(path):
 
 
 def parse_time(human):
-    match = re.search("(?:(\d\d):)?(?:(\d\d):)?(\d+(?:\.\d*)?)", human, flags=re.IGNORECASE)
+    match = re.search("(?:(\d\d):)?(?:(\d\d):)?(\d\d(?:\.\d*)?)", human, flags=re.IGNORECASE)
     if match:
         if match[1] is None and match[2] is None:
             return float(match[3])
         elif match[2] is None:
             return float(match[3]) + 60 * int(match[1])
         else:
-            return float(match[3]) + 60 * int(match[2]) + 3600 * int(match[1])
+            return float(match[3]) + 60 * int(match[2]) + 3600 * int(match[2])
     else:
         raise ValueError("Invalid time string given.")
 
 
-def format_time(seconds):
-    hours = seconds // 3600
-    seconds = seconds % 3600
-    minutes = seconds // 60
-    seconds = seconds % 60
-    return f"{hours:d}:{minutes:02d}:{seconds:02d}"
-
-
 def parse_file_size(human):
-    units = {"B": 1, "KB": 1024, "MB": 1024 * 1024, "GB": 1024 * 1024 * 1024, "TB": 1024 * 1024 * 1024 * 1024,
-             "K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024, "T": 1024 * 1024 * 1024 * 1024}
+    units = {"B": 1, "KB": 1024, "MB": 1024*1024, "GB": 1024*1024*1024, "TB": 1024*1024*1024*1024,
+             "K": 1024, "M": 1024*1024, "G": 1024*1024*1024, "T": 1024*1024*1024*1024}
     match = re.search("(\d+(?:\.\d*)?)\s*([A-Za-z]+)", human, flags=re.IGNORECASE)
     if match:
         num = float(match[1])
@@ -423,53 +378,6 @@ def verify_password(password, salted_hash, salt):
     return False
 
 
-def get_supported_language():
-    root_dir = os.path.dirname(__file__)
-    lang_files = os.listdir(os.path.join(root_dir, 'lang'))
-    lang_list = []
-    for lang_file in lang_files:
-        match = re.search("([a-z]{2}_[A-Z]{2})\.json", lang_file)
-        if match:
-            lang_list.append(match[1])
-
-    return lang_list
-
-
-def set_logging_formatter(handler: logging.Handler, logging_level):
-    if logging_level == logging.DEBUG:
-        formatter = logging.Formatter(
-            "[%(asctime)s] > [%(threadName)s] > "
-            "[%(filename)s:%(lineno)d] %(message)s"
-        )
-    else:
-        formatter = logging.Formatter(
-            '[%(asctime)s %(levelname)s] %(message)s', "%b %d %H:%M:%S")
-
-    handler.setFormatter(formatter)
-
-
-def get_snapshot_version():
-    import subprocess
-    wd = os.getcwd()
-    root_dir = os.path.dirname(__file__)
-    os.chdir(root_dir)
-
-    ver = "unknown"
-    if os.path.exists(os.path.join(root_dir, ".git")):
-        try:
-            ret = subprocess.check_output(["git", "describe", "--tags"]).strip()
-            ver = ret.decode("utf-8")
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            try:
-                with open(os.path.join(root_dir, ".git/refs/heads/master")) as f:
-                    ver = "g" + f.read()[:7]
-            except FileNotFoundError:
-                pass
-
-    os.chdir(wd)
-    return ver
-
-
 class LoggerIOWrapper(io.TextIOWrapper):
     def __init__(self, logger: logging.Logger, logging_level, fallback_io_buffer):
         super().__init__(fallback_io_buffer, write_through=True)
@@ -487,7 +395,7 @@ class LoggerIOWrapper(io.TextIOWrapper):
 
 
 class VolumeHelper:
-    def __init__(self, plain_volume=0, ducking_plain_volume=0):
+    def __init__(self, plain_volume = 0, ducking_plain_volume = 0):
         self.plain_volume_set = 0
         self.plain_ducking_volume_set = 0
         self.volume_set = 0
@@ -515,79 +423,3 @@ class VolumeHelper:
 
         # Some dirty trick to stretch the function, to make to be 0 when input is -35 dB
         return (10 ** (dB / 20) - 10 ** (-35 / 20)) / (1 - 10 ** (-35 / 20))
-
-
-def get_size_folder(path):
-    global log
-
-    folder_size = 0
-    for (path, dirs, files) in os.walk(path):
-        for file in files:
-            filename = os.path.join(path, file)
-            try:
-                folder_size += os.path.getsize(filename)
-            except (FileNotFoundError, OSError):
-                continue
-    return int(folder_size / (1024 * 1024))
-
-
-def clear_tmp_folder(path, size):
-    global log
-
-    if size == -1:
-        return
-    elif size == 0:
-        for (path, dirs, files) in os.walk(path):
-            for file in files:
-                filename = os.path.join(path, file)
-                try:
-                    os.remove(filename)
-                except (FileNotFoundError, OSError):
-                    continue
-    else:
-        if get_size_folder(path=path) > size:
-            all_files = ""
-            for (path, dirs, files) in os.walk(path):
-                all_files = [os.path.join(path, file) for file in files]
-                # exclude invalid symlinks (linux)
-                all_files = [file for file in all_files if os.path.exists(file)]
-                all_files.sort(key=lambda x: os.path.getmtime(x))
-            size_tp = 0
-            for idx, file in enumerate(all_files):
-                size_tp += os.path.getsize(file)
-                if int(size_tp / (1024 * 1024)) > size:
-                    log.info("Cleaning tmp folder")
-                    to_remove = all_files[:idx]
-                    print(to_remove)
-                    for f in to_remove:
-                        log.debug("Removing " + f)
-                        try:
-                            os.remove(os.path.join(path, f))
-                        except (FileNotFoundError, OSError):
-                            continue
-                    return
-
-
-def check_extra_config(config, template):
-    extra = []
-
-    for key in config.sections():
-        if key in ['radio']:
-            continue
-        for opt in config.options(key):
-            if not template.has_option(key, opt):
-                extra.append((key, opt))
-
-    return extra
-
-
-def parse_cookie_file(cookiefile):
-    # https://stackoverflow.com/a/54659484/1584825
-
-    cookies = {}
-    with open (cookiefile, 'r') as fp:
-        for line in fp:
-            if not re.match(r'^#', line):
-                lineFields = line.strip().split('\t')
-                cookies[lineFields[5]] = lineFields[6]
-    return cookies

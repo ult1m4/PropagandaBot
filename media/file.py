@@ -9,7 +9,7 @@ from PIL import Image
 import util
 import variables as var
 from media.item import BaseItem, item_builders, item_loaders, item_id_generators, ValidationFailedError
-from constants import tr_cli as tr
+import constants
 
 '''
 type : file
@@ -75,7 +75,7 @@ class FileItem(BaseItem):
         if not os.path.exists(self.uri()):
             self.log.info(
                 "file: music file missed for %s" % self.format_debug_string())
-            raise ValidationFailedError(tr('file_missed', file=self.path))
+            raise ValidationFailedError(constants.strings('file_missed', file=self.path))
 
         if self.duration == 0:
             self.duration = util.get_media_duration(self.uri())
@@ -84,23 +84,19 @@ class FileItem(BaseItem):
         return True
 
     def _get_info_from_tag(self):
-        path, file_name_ext = os.path.split(self.uri())
-        file_name, ext = os.path.splitext(file_name_ext)
+        match = re.search(r"(.+)\.(.+)", self.uri())
+        assert match is not None
 
-        assert path is not None and file_name is not None
+        file_no_ext = match[1]
+        ext = match[2]
 
         try:
             im = None
-            path_thumbnail = os.path.join(path, file_name + ".jpg")
-
+            path_thumbnail = file_no_ext + ".jpg"
             if os.path.isfile(path_thumbnail):
                 im = Image.open(path_thumbnail)
-            else:
-                path_thumbnail = os.path.join(path, "cover.jpg")
-                if os.path.isfile(path_thumbnail):
-                    im = Image.open(path_thumbnail)
 
-            if ext == ".mp3":
+            if ext == "mp3":
                 # title: TIT2
                 # artist: TPE1, TPE2
                 # album: TALB
@@ -115,7 +111,7 @@ class FileItem(BaseItem):
                     if "APIC:" in tags:
                         im = Image.open(BytesIO(tags["APIC:"].data))
 
-            elif ext == ".m4a" or ext == ".m4b" or ext == ".mp4" or ext == ".m4p":
+            elif ext == "m4a" or ext == "m4b" or ext == "mp4" or ext == "m4p":
                 # title: ©nam (\xa9nam)
                 # artist: ©ART
                 # album: ©alb
@@ -130,60 +126,17 @@ class FileItem(BaseItem):
                     if "covr" in tags:
                         im = Image.open(BytesIO(tags["covr"][0]))
 
-            elif ext == ".opus":
-                # title: 'title'
-                # artist: 'artist'
-                # album: 'album'
-                # cover artwork: 'metadata_block_picture', and then:
-                ##                          |
-                ##                          |
-                ##                          v
-                ##            Decode string as base64 binary
-                ##                          |
-                ##                          v
-                ##      Open that binary as a mutagen.flac.Picture
-                ##                          |
-                ##                          v
-                ##              Extract binary image data
-                tags = mutagen.File(self.uri())
-                if 'title' in tags:
-                    self.title = tags['title'][0]
-                if 'artist' in tags:
-                    self.artist = tags['artist'][0]
-
-                if im is None:
-                    if 'metadata_block_picture' in tags:
-                        pic_as_base64 = tags['metadata_block_picture'][0]
-                        as_flac_picture = mutagen.flac.Picture(base64.b64decode(pic_as_base64))
-                        im = Image.open(BytesIO(as_flac_picture.data))
-
-            elif ext == ".flac":
-                # title: 'title'
-                # artist: 'artist'
-                # album: 'album'
-                # cover artwork: tags.pictures
-                tags = mutagen.File(self.uri())
-                if 'title' in tags:
-                    self.title = tags['title'][0]
-                if 'artist' in tags:
-                    self.artist = tags['artist'][0]
-
-                if im is None:
-                    for flac_picture in tags.pictures:
-                        if flac_picture.type == 3:
-                            im = Image.open(BytesIO(flac_picture.data))
-
             if im:
                 self.thumbnail = self._prepare_thumbnail(im)
         except:
             pass
 
         if not self.title:
-            self.title = file_name
+            self.title = os.path.basename(file_no_ext)
 
     @staticmethod
     def _prepare_thumbnail(im):
-        im.thumbnail((100, 100), Image.LANCZOS)
+        im.thumbnail((100, 100), Image.ANTIALIAS)
         buffer = BytesIO()
         im = im.convert('RGB')
         im.save(buffer, format="JPEG")
@@ -205,14 +158,14 @@ class FileItem(BaseItem):
         )
 
     def format_song_string(self, user):
-        return tr("file_item",
-                  title=self.title,
-                  artist=self.artist if self.artist else '??',
-                  user=user
-                  )
+        return constants.strings("file_item",
+                                 title=self.title,
+                                 artist=self.artist if self.artist else '??',
+                                 user=user
+                                 )
 
     def format_current_playing(self, user):
-        display = tr("now_playing", item=self.format_song_string(user))
+        display = constants.strings("now_playing", item=self.format_song_string(user))
         if self.thumbnail:
             thumbnail_html = '<img width="80" src="data:image/jpge;base64,' + \
                              self.thumbnail + '"/>'
@@ -228,4 +181,4 @@ class FileItem(BaseItem):
             return title
 
     def display_type(self):
-        return tr("file")
+        return constants.strings("file")

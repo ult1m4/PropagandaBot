@@ -14,10 +14,6 @@ import variables as var
 import util
 
 
-class ItemNotCachedError(Exception):
-    pass
-
-
 class MusicCache(dict):
     def __init__(self, db: MusicDatabase):
         super().__init__()
@@ -146,7 +142,7 @@ class CachedItemWrapper:
         if self.id in self.lib:
             return self.lib[self.id]
         else:
-            raise ItemNotCachedError(f"Uncached item of id {self.id}, type {self.type}.")
+            raise ValueError(f"Uncached item of id {self.id}.")
 
     def to_dict(self):
         dict = self.item().to_dict()

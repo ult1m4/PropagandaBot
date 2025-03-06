@@ -7,7 +7,7 @@ import hashlib
 
 from media.item import BaseItem
 from media.item import item_builders, item_loaders, item_id_generators
-from constants import tr_cli as tr
+import constants
 
 log = logging.getLogger("bot")
 
@@ -22,13 +22,11 @@ def get_radio_server_description(url):
     url_icecast = base_url + '/status-json.xsl'
     url_shoutcast = base_url + '/stats?json=1'
     try:
-        response = requests.head(url_shoutcast, timeout=3)
-        if not response.headers.get('content-type', '').startswith(("audio/", "video/")):
-            response = requests.get(url_shoutcast, timeout=10)
-            data = response.json()
-            title_server = data['servertitle']
-            return title_server
-            # logging.info("TITLE FOUND SHOUTCAST: " + title_server)
+        r = requests.get(url_shoutcast, timeout=10)
+        data = r.json()
+        title_server = data['servertitle']
+        return title_server
+        # logging.info("TITLE FOUND SHOUTCAST: " + title_server)
     except (requests.exceptions.ConnectionError,
             requests.exceptions.HTTPError,
             requests.exceptions.ReadTimeout,
@@ -40,18 +38,16 @@ def get_radio_server_description(url):
         return url
 
     try:
-        response = requests.head(url_shoutcast, timeout=3)
-        if not response.headers.get('content-type', '').startswith(("audio/", "video/")):
-            response = requests.get(url_icecast, timeout=10)
-            data = response.json()
-            source = data['icestats']['source']
-            if type(source) is list:
-                source = source[0]
-            title_server = source['server_name']
-            if 'server_description' in source:
-                title_server += ' - ' + source['server_description']
-            # logging.info("TITLE FOUND ICECAST: " + title_server)
-            return title_server
+        r = requests.get(url_icecast, timeout=10)
+        data = r.json()
+        source = data['icestats']['source']
+        if type(source) is list:
+            source = source[0]
+        title_server = source['server_name']
+        if 'server_description' in source:
+            title_server += ' - ' + source['server_description']
+        # logging.info("TITLE FOUND ICECAST: " + title_server)
+        return title_server
     except (requests.exceptions.ConnectionError,
             requests.exceptions.HTTPError,
             requests.exceptions.ReadTimeout,
@@ -151,18 +147,18 @@ class RadioItem(BaseItem):
         )
 
     def format_song_string(self, user):
-        return tr("radio_item",
-                  url=self.url,
-                  title=get_radio_title(self.url),  # the title of current song
-                  name=self.title,  # the title of radio station
-                  user=user
-                  )
+        return constants.strings("radio_item",
+                                 url=self.url,
+                                 title=get_radio_title(self.url),  # the title of current song
+                                 name=self.title,  # the title of radio station
+                                 user=user
+                                 )
 
     def format_current_playing(self, user):
-        return tr("now_playing", item=self.format_song_string(user))
+        return constants.strings("now_playing", item=self.format_song_string(user))
 
     def format_title(self):
         return self.title if self.title else self.url
 
     def display_type(self):
-        return tr("radio")
+        return constants.strings("radio")

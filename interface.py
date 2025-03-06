@@ -63,8 +63,7 @@ class ReverseProxied(object):
         return self.app(environ, start_response)
 
 
-root_dir = os.path.dirname(__file__)
-web = Flask(__name__, template_folder=os.path.join(root_dir, "web/templates"))
+web = Flask(__name__)
 #web.config['TEMPLATES_AUTO_RELOAD'] = True
 log = logging.getLogger("bot")
 user = 'Remote Control'
@@ -163,17 +162,16 @@ def requires_auth(f):
                 bad_access_count[request.remote_addr] += 1
                 log.info(f"web: bad token from ip {request.remote_addr}, "
                          f"{bad_access_count[request.remote_addr]} attempts.")
-                if bad_access_count[request.remote_addr] > var.config.getint("webinterface", "max_attempts"):
+                if bad_access_count[request.remote_addr] > var.config.getint("webinterface", "max_attempts", fallback=10):
                     banned_ip.append(request.remote_addr)
                     log.info(f"web: access banned for {request.remote_addr}")
             else:
                 bad_access_count[request.remote_addr] = 1
                 log.info(f"web: bad token from ip {request.remote_addr}.")
 
-            return render_template(f'need_token.{var.language}.html',
+            return render_template('need_token.html',
                                    name=var.config.get('bot', 'username'),
-                                   command=f"{var.config.get('commands', 'command_symbol')[0]}"
-                                           f"{var.config.get('commands', 'requests_webinterface_access')}")
+                                   command=f"{var.config.get('commands', 'command_symbol')[0]}{var.config.get('commands', 'requests_webinterface_access')}")
 
         return f(*args, **kwargs)
 
@@ -209,7 +207,7 @@ def build_tags_color_lookup():
 
 
 def get_all_dirs():
-    dirs = ["."]
+    dirs = []
     paths = var.music_db.query_all_paths()
     for path in paths:
         pos = 0
@@ -227,19 +225,25 @@ def get_all_dirs():
 @web.route("/", methods=['GET'])
 @requires_auth
 def index():
-    return open(os.path.join(root_dir, f"web/templates/index.{var.language}.html"), "r").read()
+    while var.cache.dir_lock.locked():
+        time.sleep(0.1)
+
+    tags_color_lookup = build_tags_color_lookup()
+    max_upload_file_size = util.parse_file_size(var.config.get("webinterface", "max_upload_file_size", fallback="30MB"))
+
+    return render_template('index.html',
+                           dirs=get_all_dirs(),
+                           upload_enabled=var.config.getboolean("webinterface", "upload_enabled", fallback=True),
+                           tags_color_lookup=tags_color_lookup,
+                           max_upload_file_size=max_upload_file_size
+                           )
 
 
 @web.route("/playlist", methods=['GET'])
 @requires_auth
 def playlist():
     if len(var.playlist) == 0:
-        return jsonify({
-            'items': [],
-            'current_index': -1,
-            'length': 0,
-            'start_from': 0
-        })
+        return ('', 204)
 
     DEFAULT_DISPLAY_COUNT = 11
     _from = 0
@@ -335,12 +339,12 @@ def status():
 def post():
     global log
 
-    payload = request.get_json() if request.is_json else request.form
-    if payload:
-        log.debug("web: Post request from %s: %s" % (request.remote_addr, str(payload)))
+    if request.method == 'POST':
+        if request.form:
+            log.debug("web: Post request from %s: %s" % (request.remote_addr, str(request.form)))
 
-        if 'add_item_at_once' in payload:
-            music_wrapper = get_cached_wrapper_by_id(payload['add_item_at_once'], user)
+        if 'add_item_at_once' in request.form:
+            music_wrapper = get_cached_wrapper_by_id(request.form['add_item_at_once'], user)
             if music_wrapper:
                 var.playlist.insert(var.playlist.current_index + 1, music_wrapper)
                 log.info('web: add to playlist(next): ' + music_wrapper.format_debug_string())
@@ -351,8 +355,8 @@ def post():
             else:
                 abort(404)
 
-        if 'add_item_bottom' in payload:
-            music_wrapper = get_cached_wrapper_by_id(payload['add_item_bottom'], user)
+        if 'add_item_bottom' in request.form:
+            music_wrapper = get_cached_wrapper_by_id(request.form['add_item_bottom'], user)
 
             if music_wrapper:
                 var.playlist.append(music_wrapper)
@@ -360,16 +364,16 @@ def post():
             else:
                 abort(404)
 
-        elif 'add_item_next' in payload:
-            music_wrapper = get_cached_wrapper_by_id(payload['add_item_next'], user)
+        elif 'add_item_next' in request.form:
+            music_wrapper = get_cached_wrapper_by_id(request.form['add_item_next'], user)
             if music_wrapper:
                 var.playlist.insert(var.playlist.current_index + 1, music_wrapper)
                 log.info('web: add to playlist(next): ' + music_wrapper.format_debug_string())
             else:
                 abort(404)
 
-        elif 'add_url' in payload:
-            music_wrapper = get_cached_wrapper_from_scrap(type='url', url=payload['add_url'], user=user)
+        elif 'add_url' in request.form:
+            music_wrapper = get_cached_wrapper_from_scrap(type='url', url=request.form['add_url'], user=user)
             var.playlist.append(music_wrapper)
 
             log.info("web: add to playlist: " + music_wrapper.format_debug_string())
@@ -377,19 +381,19 @@ def post():
                 # If I am the second item on the playlist. (I am the next one!)
                 var.bot.async_download_next()
 
-        elif 'add_radio' in payload:
-            url = payload['add_radio']
+        elif 'add_radio' in request.form:
+            url = request.form['add_radio']
             music_wrapper = get_cached_wrapper_from_scrap(type='radio', url=url, user=user)
             var.playlist.append(music_wrapper)
 
             log.info("cmd: add to playlist: " + music_wrapper.format_debug_string())
 
-        elif 'delete_music' in payload:
-            music_wrapper = var.playlist[int(payload['delete_music'])]
+        elif 'delete_music' in request.form:
+            music_wrapper = var.playlist[int(request.form['delete_music'])]
             log.info("web: delete from playlist: " + music_wrapper.format_debug_string())
 
-            if len(var.playlist) >= int(payload['delete_music']):
-                index = int(payload['delete_music'])
+            if len(var.playlist) >= int(request.form['delete_music']):
+                index = int(request.form['delete_music'])
 
                 if index == var.playlist.current_index:
                     var.playlist.remove(index)
@@ -407,20 +411,20 @@ def post():
                 else:
                     var.playlist.remove(index)
 
-        elif 'play_music' in payload:
-            music_wrapper = var.playlist[int(payload['play_music'])]
+        elif 'play_music' in request.form:
+            music_wrapper = var.playlist[int(request.form['play_music'])]
             log.info("web: jump to: " + music_wrapper.format_debug_string())
 
-            if len(var.playlist) >= int(payload['play_music']):
-                var.bot.play(int(payload['play_music']))
+            if len(var.playlist) >= int(request.form['play_music']):
+                var.bot.play(int(request.form['play_music']))
                 time.sleep(0.1)
-        elif 'move_playhead' in payload:
-            if float(payload['move_playhead']) < var.playlist.current_item().item().duration:
-                log.info(f"web: move playhead to {float(payload['move_playhead'])} s.")
-                var.bot.play(var.playlist.current_index, float(payload['move_playhead']))
+        elif 'move_playhead' in request.form:
+            if float(request.form['move_playhead']) < var.playlist.current_item().item().duration:
+                log.info(f"web: move playhead to {float(request.form['move_playhead'])} s.")
+                var.bot.play(var.playlist.current_index, float(request.form['move_playhead']))
 
-        elif 'delete_item_from_library' in payload:
-            _id = payload['delete_item_from_library']
+        elif 'delete_item_from_library' in request.form:
+            _id = request.form['delete_item_from_library']
             var.playlist.remove_by_id(_id)
             item = var.cache.get_item_by_id(_id)
 
@@ -431,15 +435,15 @@ def post():
             var.cache.free_and_delete(_id)
             time.sleep(0.1)
 
-        elif 'add_tag' in payload:
-            music_wrappers = get_cached_wrappers_by_tags([payload['add_tag']], user)
+        elif 'add_tag' in request.form:
+            music_wrappers = get_cached_wrappers_by_tags([request.form['add_tag']], user)
             for music_wrapper in music_wrappers:
                 log.info("cmd: add to playlist: " + music_wrapper.format_debug_string())
             var.playlist.extend(music_wrappers)
 
-        elif 'action' in payload:
-            action = payload['action']
-            if action == "random":
+        elif 'action' in request.form:
+            action = request.form['action']
+            if action == "randomize":
                 if var.playlist.mode != "random":
                     var.playlist = media.playlist.get_playlist("random", var.playlist)
                 else:
@@ -464,7 +468,7 @@ def post():
                 var.music_db.manage_special_tags()
                 log.info("web: Local file cache refreshed.")
             elif action == "stop":
-                if var.config.getboolean("bot", "clear_when_stop_in_oneshot") \
+                if var.config.getboolean("bot", "clear_when_stop_in_oneshot", fallback=False) \
                         and var.playlist.mode == 'one-shot':
                     var.bot.clear()
                 else:
@@ -496,14 +500,14 @@ def post():
                 var.db.set('bot', 'volume', str(var.bot.volume_helper.plain_volume_set))
                 log.info("web: volume down to %d" % (var.bot.volume_helper.plain_volume_set * 100))
             elif action == "volume_set_value":
-                if 'new_volume' in payload:
-                    if float(payload['new_volume']) > 1:
+                if 'new_volume' in request.form:
+                    if float(request.form['new_volume']) > 1:
                         var.bot.volume_helper.set_volume(1.0)
-                    elif float(payload['new_volume']) < 0:
+                    elif float(request.form['new_volume']) < 0:
                         var.bot.volume_helper.set_volume(0)
                     else:
                         # value for new volume is between 0 and 1, round to two decimal digits
-                        var.bot.volume_helper.set_volume(round(float(payload['new_volume']), 2))
+                        var.bot.volume_helper.set_volume(round(float(request.form['new_volume']), 2))
 
                     var.db.set('bot', 'volume', str(var.bot.volume_helper.plain_volume_set))
                     log.info("web: volume set to %d" % (var.bot.volume_helper.plain_volume_set * 100))
@@ -523,8 +527,6 @@ def build_library_query_condition(form):
 
         if form['type'] == 'file':
             folder = form['dir']
-            if folder == ".":
-                folder = ""
             if not folder.endswith('/') and folder:
                 folder += '/'
             condition.and_like('path', folder + '%')
@@ -550,38 +552,17 @@ def build_library_query_condition(form):
         abort(400)
 
 
-@web.route("/library/info", methods=['GET'])
-@requires_auth
-def library_info():
-    global log
-
-    while var.cache.dir_lock.locked():
-        time.sleep(0.1)
-
-    tags = var.music_db.query_all_tags()
-    max_upload_file_size = util.parse_file_size(var.config.get("webinterface", "max_upload_file_size"))
-
-    return jsonify(dict(
-        dirs=get_all_dirs(),
-        upload_enabled=var.config.getboolean("webinterface", "upload_enabled") or var.bot.is_admin(user),
-        delete_allowed=var.config.getboolean("bot", "delete_allowed") or var.bot.is_admin(user),
-        tags=tags,
-        max_upload_file_size=max_upload_file_size
-    ))
-
-
 @web.route("/library", methods=['POST'])
 @requires_auth
 def library():
     global log
     ITEM_PER_PAGE = 10
 
-    payload = request.form if request.form else request.json
-    if payload:
-        log.debug("web: Post request from %s: %s" % (request.remote_addr, str(payload)))
+    if request.form:
+        log.debug("web: Post request from %s: %s" % (request.remote_addr, str(request.form)))
 
-        if payload['action'] in ['add', 'query', 'delete']:
-            condition = build_library_query_condition(payload)
+        if request.form['action'] in ['add', 'query', 'delete']:
+            condition = build_library_query_condition(request.form)
 
             total_count = 0
             try:
@@ -590,13 +571,9 @@ def library():
                 pass
 
             if not total_count:
-                return jsonify({
-                    'items': [],
-                    'total_pages': 0,
-                    'active_page': 0
-                })
+                return '', 204
 
-            if payload['action'] == 'add':
+            if request.form['action'] == 'add':
                 items = dicts_to_items(var.music_db.query_music(condition))
                 music_wrappers = []
                 for item in items:
@@ -608,30 +585,27 @@ def library():
                 var.playlist.extend(music_wrappers)
 
                 return redirect("./", code=302)
-            elif payload['action'] == 'delete':
-                if var.config.getboolean("bot", "delete_allowed"):
-                    items = dicts_to_items(var.music_db.query_music(condition))
-                    for item in items:
-                        var.playlist.remove_by_id(item.id)
-                        item = var.cache.get_item_by_id(item.id)
+            elif request.form['action'] == 'delete':
+                items = dicts_to_items(var.music_db.query_music(condition))
+                for item in items:
+                    var.playlist.remove_by_id(item.id)
+                    item = var.cache.get_item_by_id(item.id)
 
-                        if os.path.isfile(item.uri()):
-                            log.info("web: delete file " + item.uri())
-                            os.remove(item.uri())
+                    if os.path.isfile(item.uri()):
+                        log.info("web: delete file " + item.uri())
+                        os.remove(item.uri())
 
-                        var.cache.free_and_delete(item.id)
+                    var.cache.free_and_delete(item.id)
 
-                    if len(os.listdir(var.music_folder + payload['dir'])) == 0:
-                        os.rmdir(var.music_folder + payload['dir'])
+                if len(os.listdir(var.music_folder + request.form['dir'])) == 0:
+                    os.rmdir(var.music_folder + request.form['dir'])
 
-                    time.sleep(0.1)
-                    return redirect("./", code=302)
-                else:
-                    abort(403)
+                time.sleep(0.1)
+                return redirect("./", code=302)
             else:
                 page_count = math.ceil(total_count / ITEM_PER_PAGE)
 
-                current_page = int(payload['page']) if 'page' in payload else 1
+                current_page = int(request.form['page']) if 'page' in request.form else 1
                 if current_page <= page_count:
                     condition.offset((current_page - 1) * ITEM_PER_PAGE)
                 else:
@@ -663,15 +637,15 @@ def library():
                     'total_pages': page_count,
                     'active_page': current_page
                 })
-        elif payload['action'] == 'edit_tags':
-            tags = list(dict.fromkeys(payload['tags'].split(",")))  # remove duplicated items
-            if payload['id'] in var.cache:
-                music_wrapper = get_cached_wrapper_by_id(payload['id'], user)
+        elif request.form['action'] == 'edit_tags':
+            tags = list(dict.fromkeys(request.form['tags'].split(",")))  # remove duplicated items
+            if request.form['id'] in var.cache:
+                music_wrapper = get_cached_wrapper_by_id(request.form['id'], user)
                 music_wrapper.clear_tags()
                 music_wrapper.add_tags(tags)
                 var.playlist.version += 1
             else:
-                item = var.music_db.query_music_by_id(payload['id'])
+                item = var.music_db.query_music_by_id(request.form['id'])
                 item['tags'] = tags
                 var.music_db.insert_music(item)
             return redirect("./", code=302)
@@ -685,7 +659,7 @@ def library():
 def upload():
     global log
 
-    if not var.config.getboolean("webinterface", "upload_enabled"):
+    if not var.config.getboolean("webinterface", "upload_enabled", fallback=True):
         abort(403)
 
     file = request.files['file']
@@ -707,7 +681,7 @@ def upload():
     log.info('web: - targetdir: ' + targetdir)
     log.info('web: - mimetype: ' + file.mimetype)
 
-    if "audio" in file.mimetype or "video" in file.mimetype:
+    if "audio" in file.mimetype:
         storagepath = os.path.abspath(os.path.join(var.music_folder, targetdir))
         if not storagepath.startswith(os.path.abspath(var.music_folder)):
             abort(403)
