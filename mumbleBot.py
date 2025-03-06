@@ -32,11 +32,11 @@ from media.cache import MusicCache
 
 
 class MumbleBot:
-    version = '6.5'
+    version = '1.0'
 
     def __init__(self, args):
         self.log = logging.getLogger("bot")
-        self.log.info(f"bot: botamusique version {self.version}, starting...")
+        self.log.info(f"bot: PropagandaBot version {self.version}, starting...")
         signal.signal(signal.SIGINT, self.ctrl_caught)
         self.cmd_handle = {}
 
