@@ -79,11 +79,11 @@ Note: Listening to address `127.0.0.1` will only accept requests from localhost.
 By default, murmur server uses certificates to identify users. Without a valid certificate, you wouldn't able to register the bot into your Murmur server. Some server even refused users without a certificate. Therefore, it is recommended to generate a certificate for the bot. If you have a certificate (for say, `botmusique.pem` in the folder of the bot), you can specify its location in
 ```
 [server]
-certificate=botamusique.pem
+certificate=propagandabot.pem
 ```
 
 If you don't have a certificate, you may generate one by:
-`openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout botamusique.pem -out botamusique.pem -subj "/CN=botamusique"`
+`openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout propagandabot.pem -out propagandabot.pem -subj "/CN=propagandabot"`
 
 
 #### Sections explained
@@ -101,7 +101,7 @@ If you have set up everything in your `configuration.ini`, you can
 `venv/bin/python mumbleBot.py --config configuration.ini`
 
 Or you can
-`venv/bin/python mumbleBot.py -s HOST -u BOTNAME -P PASSWORD -p PORT -c CHANNEL -C /path/to/botamusique.pem`
+`venv/bin/python mumbleBot.py -s HOST -u BOTNAME -P PASSWORD -p PORT -c CHANNEL -C /path/to/propagandabot.pem`
 
 If you want information about auto-starting and auto-restarting of the bot, you can check out the wiki page [Run propagandabot as a daemon in the background](https://github.com/azlux/botamusique/wiki/Run-botamusique-as-a-daemon-In-the-background).
 
