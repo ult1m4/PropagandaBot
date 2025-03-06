@@ -1,6 +1,6 @@
 <div align="center">
 <img src="static/image/logo.png" alt="propaganda" width="200px" />
-<h1>botamusique</h1>
+<h1>Propaganda Bot</h1>
 </div>
 
 Propaganda Bot is a [Mumble](https://www.mumble.info/) music bot, forked from Botamusique.
