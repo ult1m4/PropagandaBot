@@ -151,10 +151,9 @@ For more information, see [#122](https://github.com/azlux/botamusique/issues/122
 
 
 ### Contributors
-If you want to participate, You're welcome to fork and submit pull requests (fixes and new features).
+If you want to participate, you're welcome to fork and submit pull requests (fixes, refinement, good features).
 
-The following people joined the collaborators for a faster development, big thanks to them:
+Thank you to all the previous creators, collaborators, and maintainers, to which this bot wouldn't exist at all. I merely patched it. Big kudos:
+- @azlux
 - @TerryGeng
 - @mertkutay
-
-Feel free to ask me if you want to help actively without using pull requests.
