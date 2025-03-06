@@ -9,6 +9,10 @@ Use basic commands such as !play youtube-url.
 
 I plan on removing some functionalities to keep this as streamlined as possible: a simple YouTube/Media player bot with volume control that is easy to maintain.
 
+Botamusique has deprecated, but props to @azlux for making this work. All I've done is update everwhere that youtube-dl was being used to use yt-dlp, and I disabled updating.
+
+You will have to manually update yt-dlp with pip when you need it.
+
 ## Features
 
 1. **Support multiple music sources:**
