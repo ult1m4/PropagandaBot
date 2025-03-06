@@ -13,13 +13,13 @@ I plan on removing some functionalities to keep this as streamlined as possible:
 
 1. **Support multiple music sources:**
     - Music in local folders (which can be uploaded through the web interface).
-    - Youtube/Soundcloud URLs and playlists (everything supported by youtube-dl).
-    - Radio stations from URL and http://www.radio-browser.info API.
+    - Youtube/Soundcloud URLs and playlists (everything supported by yt-dlp).
+    - Radio stations from URL and http://www.radio-browser.info API. (To be removed...)
 2. **Modern and powerful web remote control interface.** Powered by Flask. Which supports:
     - Playlist management.
     - Music library management, including uploading, browsing all files and edit tags, etc.
-3. **Powerful command system.** Commands and words the bot says are fully customizable. Support partial-match for commands.
-4. **Ducking.** The bot would automatically lower its volume if people are talking.
+3. **Powerful command system.** Commands and words the bot says are fully customizable. Support partial-match for commands. (To be made simpler...)
+4. **Ducking.** The bot would automatically lower its volume if people are talking. (To be removed...)
 
 -----
 ## Quick Start Guide
@@ -37,10 +37,8 @@ I plan on removing some functionalities to keep this as streamlined as possible:
 1. Install python3 and pip install -r requirements.txt
 
 ### Configuration
-1. Please copy `configuration.example.ini` into `configuration.ini`, follow the instructions in the file and uncomment options you would like to modify. Please DO NOT MODIFY `configuration.default.ini`, since options undefined in `configuration.ini` will fall back into `configuration.default.ini`. This file will be constantly overridden in each update.
-
-We list some basic settings for you to quickly get things working.
-
+1. Use the default configuration file with IP/etc based on your use case.
+   
 #### Basic settings
 1. Usually, the first thing is to set the Murmur server you'd like the bot to connect to. You may also specify which channel the bot stays, and tokens used by the bot.
 ```
